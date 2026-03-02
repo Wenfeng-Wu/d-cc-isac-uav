@@ -1,0 +1,134 @@
+class iprocess(nn.Module):
+    def __init__(self):
+        super(iprocess, self).__init__()
+
+        self.cnn1 = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=8),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=8, out_channels=16, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=16),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=16),
+            nn.PReLU(),
+            nn.Conv2d(in_channels=16, out_channels=8, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=8),
+            nn.PReLU(),
+        )
+        self.linear_i1 = torch.nn.Linear(in_features=32, out_features=8, bias=True)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+        return self.linear_i1(self.cnn1(x).view(batch_size,-1))
+
+class EstimateNow(torch.nn.Module):
+    def __init__(self, device):
+        super(EstimateNow, self).__init__()
+        self.device = device
+        # cam1
+        #self.linear1 = torch.nn.Linear(in_features=2, out_features=8, bias=True)
+        #self.i1 = iprocess()
+        #self.linear_out1 = torch.nn.Linear(in_features=16, out_features=2, bias=True)
+
+        # cam2
+        self.linear2 = torch.nn.Linear(in_features=2, out_features=8, bias=True)
+        self.i2 = iprocess()
+        self.linear_out2 = torch.nn.Linear(in_features=16, out_features=2, bias=True)
+
+        # cam3
+        #self.linear3 = torch.nn.Linear(in_features=2, out_features=8, bias=True)
+        #self.i3 = iprocess()
+        #self.linear_out3 = torch.nn.Linear(in_features=16, out_features=2, bias=True)
+
+
+    def set_input(self, batch):
+        cam_1_i, cam_2_i, cam_3_i, cam_4_i = [], [], [], []
+        cam_1_xy, cam_2_xy, cam_3_xy, cam_4_xy = [], [], [], []
+        label_a, label_p, label_d = [], [], []
+        for i in range(batch["frame"].shape[0]):
+            cam_1_i.append(batch["cam1"]["img"][i])
+            cam_2_i.append(batch["cam2"]["img"][i])
+            cam_3_i.append(batch["cam3"]["img"][i])
+            cam_4_i.append(batch["cam4"]["img"][i])
+            cam_1_xy.append(torch.tensor([batch["cam1"]["x"][i], batch["cam1"]["y"][i]]))
+            cam_2_xy.append(torch.tensor([batch["cam2"]["x"][i], batch["cam2"]["y"][i]]))
+            cam_3_xy.append(torch.tensor([batch["cam3"]["x"][i], batch["cam3"]["y"][i]]))
+            cam_4_xy.append(torch.tensor([batch["cam4"]["x"][i], batch["cam4"]["y"][i]]))
+            label_a.append(batch["cam1"]["azimuth"][0][i])
+            label_p.append(batch["cam1"]["pitch"][0][i])
+            label_d.append(batch["cam1"]["distance"][0][i])
+        cam_1_i = torch.stack(cam_1_i, dim=0)
+        cam_2_i = torch.stack(cam_2_i, dim=0)
+        cam_3_i = torch.stack(cam_3_i, dim=0)
+        cam_4_i = torch.stack(cam_4_i, dim=0)
+        cam_1_xy = torch.stack(cam_1_xy, dim=0)
+        cam_2_xy = torch.stack(cam_2_xy, dim=0)
+        cam_3_xy = torch.stack(cam_3_xy, dim=0)
+        cam_4_xy = torch.stack(cam_4_xy, dim=0)
+        label_a = torch.stack(label_a, dim=0).unsqueeze(-1)
+        label_p = torch.stack(label_p, dim=0).unsqueeze(-1)
+        label_d = torch.stack(label_d, dim=0).unsqueeze(-1)
+        return [cam_1_i, cam_2_i, cam_3_i, cam_4_i, cam_1_xy, cam_2_xy, cam_3_xy, cam_4_xy], [label_a, label_p, label_d]
+
+
+    def forward(self, xs):
+
+        # cam1
+        #cam_1_xy = xs[4].to(self.device).float()
+        #cam_1_i = xs[0].to(self.device)
+        #out11 = self.i1(cam_1_i)          #处理i
+        #out12 = self.linear1(cam_1_xy)    #处理xy
+        #out13 = torch.cat((out11, out12), dim=1)  #合并
+        #output = self.linear_out1(out13)  #映射
+
+        # cam2
+        cam_2_xy = xs[5].to(self.device).float()
+        cam_2_i = xs[1].to(self.device)
+        out21 = self.i2(cam_2_i)          #处理i
+        out22 = self.linear2(cam_2_xy)    #处理xy
+        out23 = torch.cat((out21, out22), dim=1)   #合并
+        output = self.linear_out2(out23)  #映射
+
+        return output
+
+    def loss(self, output, labels):
+        label_a, label_p, label_d = labels[0].to(device).float(), labels[1].to(device).float(), labels[2].to(device).float()
+        #label = torch.cat((label_a, label_p, label_d), dim=1)
+        label = torch.cat((label_a, label_p), dim=1)
+        loss = nn.MSELoss()(output, label)
+        return loss
+
+    def rmse_db(self, output, labels):
+        """
+            y_pred, y_true: [b,3]
+            返回 [3] 每个维度的 RMSE
+            """
+        #labels = torch.cat(labels, dim=1).to(self.device)
+        label_a, label_p, label_d = labels[0].to(device).float(), labels[1].to(device).float(), labels[2].to(
+            device).float()
+        # label = torch.cat((label_a, label_p, label_d), dim=1)
+        labels = torch.cat((label_a, label_p), dim=1)
+
+        mse = (output - labels) ** 2  # [b,3]
+        mse_mean = mse.mean(dim=0)  # 对 batch 取平均 -> [3]
+        rmse = torch.sqrt(mse_mean)  # [3]
+        rmse_db = 20 * torch.log10(rmse + 1e-8)
+
+        return rmse_db
+
+    def mse(self, output, labels):
+        """
+            y_pred, y_true: [b,3]
+            返回 [3] 每个维度的 RMSE
+            """
+        label_a, label_p, label_d = labels[0].to(device).float(), labels[1].to(device).float(), labels[2].to(
+            device).float()
+        # label = torch.cat((label_a, label_p, label_d), dim=1)
+        labels = torch.cat((label_a, label_p), dim=1)
+
+        #labels = torch.cat(labels, dim=1).to(self.device)
+        mse = abs(output - labels)  # [b,3]
+        mse_mean = mse.mean(dim=0)  # 对 batch 取平均 -> [3]
+        mse = torch.sqrt(mse_mean)  # [3]
+        return mse
