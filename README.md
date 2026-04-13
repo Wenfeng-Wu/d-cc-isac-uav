@@ -18,8 +18,7 @@ UAV trajectory data are imported into MATLAB for:
 Echo signal simulation
 Echo-based algorithm processing
 All processed data are stored in the cache2 folder.
-   
-3.plot
+3. plot
 
 plot.py and plot_cpf.py
 
